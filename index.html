@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arch 03 — Long Context — RoPE, YaRN, Ring Attention</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-card: #0d1117;
+            --bg-code: #161b22;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent: #76B900;
+            --accent-dim: #76B90044;
+            --accent-glow: #76B90033;
+            --border: #21262d;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+            --font-body: 'Inter', sans-serif;
+            --max-width: 900px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            font-size: 17px;
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            position: relative;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        .hero > * { position: relative; z-index: 1; }
+        .series-label {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+        }
+        .hero h1 {
+            font-family: var(--font-display);
+            font-size: clamp(2rem, 5vw, 3.2rem);
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+            margin-bottom: 1rem;
+        }
+        .hero h1 .accent { color: var(--accent); }
+        .hero .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 640px;
+            margin-bottom: 2rem;
+        }
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-bottom: 2.5rem;
+        }
+        .tag {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            background: var(--accent-dim);
+            white-space: nowrap;
+        }
+        .pipeline {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            margin-bottom: 1rem;
+            max-width: var(--max-width);
+        }
+        .pipeline-step {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            padding: 0.3rem 0.7rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .pipeline-arrow { color: var(--accent); font-size: 0.9rem; font-weight: 700; }
+        .slide {
+            min-height: 100vh;
+            max-width: var(--max-width);
+            margin: 0 auto;
+            padding: 4rem 1.5rem;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .slide-number {
+            font-family: var(--font-display);
+            font-size: 5rem;
+            font-weight: 700;
+            color: var(--accent-dim);
+            position: absolute;
+            top: 2rem;
+            right: 1.5rem;
+            line-height: 1;
+            user-select: none;
+        }
+        .slide h2 {
+            font-family: var(--font-display);
+            font-size: 1.9rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 1.5rem;
+            line-height: 1.25;
+        }
+        .slide h3 {
+            font-family: var(--font-display);
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+        .slide p { margin-bottom: 1rem; color: var(--text-secondary); }
+        .slide p strong { color: var(--text-primary); }
+        .slide ul, .slide ol { margin-bottom: 1rem; padding-left: 1.5rem; color: var(--text-secondary); }
+        .slide li { margin-bottom: 0.4rem; }
+        .slide li strong { color: var(--text-primary); }
+        .slide code {
+            font-family: var(--font-mono);
+            font-size: 0.88em;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            padding: 0.05rem 0.35rem;
+            border-radius: 3px;
+            color: #c9d1d9;
+        }
+        .code-block {
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin: 1.25rem 0;
+            overflow: hidden;
+        }
+        .code-header {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            background: rgba(118, 185, 0, 0.08);
+            padding: 0.4rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .code-block pre { margin: 0; padding: 1rem; overflow-x: auto; }
+        .code-block code {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: #c9d1d9;
+            background: transparent;
+            border: none;
+            padding: 0;
+        }
+        .kw { color: #ff7b72; }
+        .fn { color: #d2a8ff; }
+        .str { color: #a5d6ff; }
+        .cm { color: #8b949e; font-style: italic; }
+        .num { color: #79c0ff; }
+        .type { color: #ffa657; }
+        .dir { color: #ff7b72; }
+        .mac { color: #ffa657; }
+        .table-wrap {
+            overflow-x: auto;
+            margin: 1.25rem 0;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th {
+            background: var(--bg-code);
+            color: var(--accent);
+            font-weight: 600;
+            text-align: left;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            font-family: var(--font-display);
+            white-space: nowrap;
+        }
+        td {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        tr:last-child td { border-bottom: none; }
+        tr:nth-child(even) td { background: rgba(13, 17, 23, 0.5); }
+        .diagram-flow {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-box {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            text-align: center;
+            white-space: nowrap;
+        }
+        .diagram-box.accent { border-color: var(--accent); color: var(--accent); background: rgba(118, 185, 0, 0.08); }
+        .diagram-box.dim { color: var(--text-secondary); border-color: var(--border); }
+        .diagram-arrow { color: var(--accent); font-size: 1.3rem; font-weight: 700; }
+        .diagram-vertical {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.3rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-vertical .diagram-arrow { font-size: 1.1rem; }
+        .hierarchy {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .hierarchy-level { display: flex; align-items: center; gap: 0.75rem; }
+        .hierarchy-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            min-width: 80px;
+            text-align: right;
+        }
+        .hierarchy-items { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+        .hierarchy-item {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .hierarchy-item.accent { border-color: var(--accent); color: var(--accent); background: rgba(118, 185, 0, 0.08); }
+        .diagram-grid {
+            display: grid;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+        .diagram-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .diagram-panel {
+            padding: 1rem;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .diagram-panel.accent-border { border-left: 3px solid var(--accent); }
+        .diagram-panel h4 {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+        .diagram-panel p, .diagram-panel ul { font-size: 0.85rem; }
+        .callout {
+            background: var(--bg-card);
+            border-left: 3px solid var(--accent);
+            border-radius: 0 8px 8px 0;
+            padding: 1rem 1.25rem;
+            margin: 1.25rem 0;
+        }
+        .callout p { margin-bottom: 0; }
+        .callout p + p { margin-top: 0.5rem; }
+        .callout .callout-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.3rem;
+        }
+        .contents-list { list-style: none; padding-left: 0; counter-reset: contents; }
+        .contents-list li {
+            counter-increment: contents;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .contents-list li:last-child { border-bottom: none; }
+        .contents-list li::before {
+            content: counter(contents, decimal-leading-zero);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+            min-width: 2rem;
+        }
+        .contents-list a { color: var(--text-primary); text-decoration: none; transition: color 0.2s; }
+        .contents-list a:hover { color: var(--accent); }
+        .footer {
+            text-align: center;
+            padding: 3rem 1.5rem;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+            max-width: var(--max-width);
+            margin: 0 auto;
+        }
+        .footer a { color: var(--accent); text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+        .canvas-wrap {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1.25rem 0;
+            overflow-x: auto;
+        }
+        .canvas-wrap canvas, .canvas-wrap svg { display: block; margin: 0 auto; max-width: 100%; }
+        .badge {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            vertical-align: middle;
+            margin-left: 0.3rem;
+        }
+        .badge.ok    { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+        .badge.warn  { border-color: #ffa657; color: #ffa657; background: rgba(255,166,87,0.08); }
+        .badge.bad   { border-color: #ff7b72; color: #ff7b72; background: rgba(255,123,114,0.08); }
+        @media (max-width: 640px) {
+            .slide { padding: 3rem 1rem; min-height: auto; }
+            .slide-number { font-size: 3rem; top: 1.5rem; right: 1rem; }
+            .slide h2 { font-size: 1.5rem; }
+            .diagram-grid.cols-2, .diagram-grid.cols-3 { grid-template-columns: 1fr; }
+            .pipeline { gap: 0.15rem; }
+            .pipeline-step { font-size: 0.6rem; padding: 0.2rem 0.4rem; }
+            .hero h1 { font-size: 1.8rem; }
+            table { font-size: 0.78rem; }
+        }
+    </style>
+</head>
+<body>
+<header class="hero">
+    <div class="series-label">Modern Architectures Series &mdash; Presentation 03</div>
+    <h1>Long Context &mdash; <span class="accent">RoPE, YaRN</span> &amp; Ring Attention</h1>
+    <p class="subtitle">How to push transformer context windows past 128K tokens without retraining: RoPE interpolation, NTK-aware scaling, YaRN's non-uniform approach, ALiBi, sliding window with sink tokens, and ring attention for million-token sequences.</p>
+
+    <div class="tags">
+        <span class="tag">RoPE</span>
+        <span class="tag">YaRN</span>
+        <span class="tag">NTK-Aware</span>
+        <span class="tag">ALiBi</span>
+        <span class="tag">Sliding Window</span>
+        <span class="tag">Ring Attention</span>
+        <span class="tag">Context Parallelism</span>
+    </div>
+
+    <div class="pipeline">
+        <span class="pipeline-step">Quadratic attn</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">RoPE</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Interpolation</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">YaRN</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Sparse attn</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Ring attn</span>
+    </div>
+</header>
+
+<section class="slide" id="slide-00">
+    <div class="slide-number">00</div>
+    <h2>Topics We'll Cover</h2>
+    <ul class="contents-list">
+        <li><a href="#slide-01">The Long-Context Problem &mdash; Quadratic Attention</a></li>
+        <li><a href="#slide-02">RoPE &mdash; What It Is, Why It's the Basis</a></li>
+        <li><a href="#slide-03">Position Interpolation &amp; NTK-Aware Scaling</a></li>
+        <li><a href="#slide-04">YaRN &mdash; The Current Cheap-Extension Leader</a></li>
+        <li><a href="#slide-05">ALiBi as an Alternative</a></li>
+        <li><a href="#slide-06">Sliding Window + Sink Tokens (StreamingLLM)</a></li>
+        <li><a href="#slide-07">Ring Attention &amp; Context Parallelism</a></li>
+        <li><a href="#slide-08">Mamba-Attention Hybrids for Very Long Context</a></li>
+        <li><a href="#slide-09">What to Take Away</a></li>
+    </ul>
+</section>
+
+<section class="slide" id="slide-01">
+    <div class="slide-number">01</div>
+    <h2>The Long-Context Problem &mdash; Quadratic Attention</h2>
+    <p>Standard scaled dot-product attention computes Q K<sup>T</sup> / &radic;d<sub>k</sub>, a T&times;T matrix where T is sequence length. Memory and FLOPs both scale as O(T<sup>2</sup> &middot; d<sub>k</sub> &middot; H) where H is number of heads. At T=128K with H=32 heads and d<sub>k</sub>=128:</p>
+
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Context length T</th><th>Attention matrix size (bytes, BF16)</th><th>Single-layer FLOPs</th></tr></thead>
+            <tbody>
+                <tr><td>4K</td><td>4,096 &times; 4,096 &times; 32 &times; 2 = 1.07 GB</td><td>~8.6 GFLOP</td></tr>
+                <tr><td>32K</td><td>67 GB</td><td>~550 GFLOP</td></tr>
+                <tr><td>128K</td><td>1.07 TB</td><td>~8.8 TFLOP</td></tr>
+                <tr><td>1M</td><td>64 TB</td><td>~536 TFLOP</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <p>Flash Attention (Dao et al. 2022) reduces the <em>memory</em> to O(T) by tiling the computation, but the FLOPs remain O(T<sup>2</sup>). For 1M tokens, the FLOPs alone make full attention impractical &mdash; a different approach is required.</p>
+
+    <div class="callout">
+        <div class="callout-label">The two independent problems</div>
+        <p><strong>Problem 1 &mdash; Positional generalisation:</strong> Models trained on 4K-token sequences use positional encodings calibrated for 0&ndash;4095. At position 100000 the encodings are out-of-distribution &rarr; perplexity spikes. <strong>Problem 2 &mdash; Compute:</strong> Even with perfect positional encodings, O(T<sup>2</sup>) attention is unaffordable at 1M tokens. Slides 02&ndash;05 address Problem 1; slides 06&ndash;07 address Problem 2.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-02">
+    <div class="slide-number">02</div>
+    <h2>RoPE &mdash; What It Is, Why It&rsquo;s the Basis</h2>
+    <p><strong>Rotary Position Embedding</strong> (Su et al. 2021, arXiv 2104.09864) is the positional encoding used by LLaMA, Mistral, Qwen, Gemma, and most modern open-weights models. It encodes absolute position as a <em>rotation</em> applied to Q and K, such that dot products Q<sub>m</sub> &middot; K<sub>n</sub> depend only on the relative position m&minus;n.</p>
+
+    <div class="code-block">
+        <div class="code-header">RoPE rotation matrix (per 2D pair of dimensions, position m)</div>
+<pre><code><span class="cm"># For dimension pair (2i, 2i+1), base &theta; = 10000:</span>
+&theta;<sub>i</sub> = <span class="num">10000</span><sup>-2i/d</sup>      <span class="cm"># i = 0..d/2-1</span>
+
+R<sub>m,i</sub> = [ cos(m &theta;<sub>i</sub>)  -sin(m &theta;<sub>i</sub>) ]
+             [ sin(m &theta;<sub>i</sub>)   cos(m &theta;<sub>i</sub>) ]
+
+<span class="cm"># Applied to query/key pairs before dot-product attention:</span>
+q&#771;<sub>m</sub> = R<sub>m</sub> q<sub>m</sub>,   k&#771;<sub>n</sub> = R<sub>n</sub> k<sub>n</sub>
+
+<span class="cm"># Relative encoding property:</span>
+q&#771;<sub>m</sub> &middot; k&#771;<sub>n</sub> = (R<sub>m</sub> q<sub>m</sub>)<sup>T</sup> (R<sub>n</sub> k<sub>n</sub>) = q<sub>m</sub><sup>T</sup> R<sub>m-n</sub> k<sub>n</sub></code></pre>
+    </div>
+
+    <h3>Why RoPE generalises poorly beyond training length</h3>
+    <p>At position m &gg; L<sub>train</sub>, the rotation angles m&theta;<sub>i</sub> land in regions never seen during training. For high-frequency dimensions (large i, small &theta;<sub>i</sub>), the angle wraps many times &mdash; positional aliasing. For low-frequency dimensions (small i, large &theta;<sub>i</sub>), the rotation is nearly trivial and generalises fine. This asymmetry is the key to YaRN&rsquo;s non-uniform treatment.</p>
+
+    <div class="callout">
+        <div class="callout-label">Why RoPE became the standard</div>
+        <p>RoPE adds no parameters, keeps the relative-encoding property without needing a separate relative-attention mechanism, is trivially compatible with KV caching, and has clean mathematical structure that makes extension tractable. ALiBi (slide 05) avoids RoPE entirely &mdash; it&rsquo;s simpler but harder to extend post-hoc.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-03">
+    <div class="slide-number">03</div>
+    <h2>Position Interpolation &amp; NTK-Aware Scaling</h2>
+    <p><strong>Position Interpolation (PI)</strong> (Chen et al. 2023, arXiv 2306.15595, from Meta) takes the simplest possible approach: if the model was trained up to position L<sub>train</sub> and you want to extend to L<sub>target</sub>, just compress position indices by the factor s = L<sub>target</sub> / L<sub>train</sub>:</p>
+
+    <div class="code-block">
+        <div class="code-header">Position Interpolation: scale factor applied to position index</div>
+<pre><code><span class="cm"># Original RoPE: angle at position m, dimension i:</span>
+&phi;<sub>m,i</sub> = m / <span class="num">10000</span><sup>2i/d</sup>
+
+<span class="cm"># PI: divide m by the extension factor s = L_target / L_train</span>
+&phi;<sub>m,i</sub><sup>PI</sup> = (m / s) / <span class="num">10000</span><sup>2i/d</sup>
+
+<span class="cm"># Equivalently: multiply all &theta;_i by s (slow them down)</span>
+&theta;<sub>i</sub><sup>PI</sup> = <span class="num">10000</span><sup>2i/d</sup> / s</code></pre>
+    </div>
+
+    <p>PI keeps all angles within the training distribution at the cost of <em>packing more positions into the same angular range</em> &mdash; nearby tokens become harder to distinguish. After just 1000 fine-tuning steps on long documents, LLaMA extended cleanly from 4K to 32K tokens.</p>
+
+    <h3>NTK-Aware Scaling (bloc97, 2023)</h3>
+    <p>The Neural Tangent Kernel analogy observes that position interpolation degrades <em>high-frequency</em> dimensions most (they rotate fastest). Instead of scaling all dimensions uniformly, NTK-aware scaling scales the <strong>base &theta;</strong> of RoPE rather than the positions:</p>
+
+    <div class="code-block">
+        <div class="code-header">NTK-Aware: rescale RoPE base by extension factor</div>
+<pre><code><span class="cm"># NTK-Aware: change the base from 10000 to a larger value</span>
+&theta;<sub>i</sub><sup>NTK</sup> = (base &middot; s<sup>d/(d-2)</sup>)<sup>-2i/d</sup>
+
+<span class="cm"># s = context extension factor, d = head dimension</span>
+<span class="cm"># For s=8 extension, LLaMA-2 d=128: base &asymp; 10000 &middot; 8^(128/126) &asymp; 82,000</span></code></pre>
+    </div>
+
+    <div class="callout">
+        <div class="callout-label">Dynamic NTK (NTK-by-parts)</div>
+        <p>A further refinement partitions RoPE dimensions into three regions: low-frequency dims (extrapolated without change), high-frequency dims (interpolated like PI), and mid-frequency dims (linearly interpolated). This is the basis of YaRN. Dynamic NTK sets s equal to the <em>current</em> sequence length / L<sub>train</sub> at inference time, allowing the model to adapt without retraining.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-04">
+    <div class="slide-number">04</div>
+    <h2>YaRN &mdash; The Current Cheap-Extension Leader</h2>
+    <p><strong>YaRN</strong> (Yet another RoPE extensioN method, Peng et al. 2023, arXiv 2309.00071) is the technique used by Mistral, Qwen, and others for cheap post-hoc context extension. It combines three elements:</p>
+
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border">
+            <h4>1. Frequency-partitioned interpolation</h4>
+            <p>RoPE dimensions are split into three groups by their wavelength &lambda;<sub>i</sub> = 2&pi; / &theta;<sub>i</sub>:<br>
+            &bull; <strong>High-freq</strong> (&lambda; &lt; L<sub>train</sub>): no interpolation (extrapolate)<br>
+            &bull; <strong>Low-freq</strong> (&lambda; &gt; L<sub>target</sub>): standard PI<br>
+            &bull; <strong>Mid-freq</strong>: linear ramp between the two</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>2. Attention temperature correction</h4>
+            <p>Longer sequences increase the entropy of attention distributions. YaRN corrects this by multiplying attention logits by a temperature factor <code>t = 0.1 &middot; ln(s) + 1</code>, where s is the extension factor. This prevents attention from sharpening artificially on nearby tokens.</p>
+        </div>
+    </div>
+
+    <h3>YaRN fine-tuning recipe</h3>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Step</th><th>Action</th><th>Cost</th></tr></thead>
+            <tbody>
+                <tr><td>1</td><td>Set YaRN hyperparameters: s = L<sub>target</sub>/L<sub>train</sub>, &alpha; = 1, &beta; = 32 (LLaMA default)</td><td>Zero</td></tr>
+                <tr><td>2</td><td>Fine-tune on 400&ndash;1000 steps with long-context data (e.g. SlimPajama, Books3) at the target length</td><td>~0.1% of original training cost</td></tr>
+                <tr><td>3</td><td>Optionally fine-tune on instruction data at target length</td><td>Additional 100&ndash;200 steps</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="callout">
+        <div class="callout-label">Real-world results</div>
+        <p>Mistral-7B (base: 8K) extended to 128K using YaRN + 400-step fine-tune achieved <strong>perplexity within 0.5 nats of models trained from scratch at 128K</strong>. Qwen-1.5 and Qwen-2 use YaRN for their 128K and 1M context variants. The method has largely superseded PI for practical extension tasks.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-05">
+    <div class="slide-number">05</div>
+    <h2>ALiBi as an Alternative</h2>
+    <p><strong>ALiBi</strong> (Attention with Linear Biases, Press et al. 2022, arXiv 2108.12409) takes a completely different approach: rather than encoding position in Q/K, it adds a <em>scalar bias</em> to attention logits that grows linearly with the distance between tokens.</p>
+
+    <div class="code-block">
+        <div class="code-header">ALiBi: attention bias added to Q K^T before softmax</div>
+<pre><code><span class="cm"># Standard attention:</span>
+A<sub>ij</sub> = <span class="fn">softmax</span>( (q<sub>i</sub> k<sub>j</sub><sup>T</sup>) / &radic;d  )
+
+<span class="cm"># ALiBi attention:</span>
+A<sub>ij</sub> = <span class="fn">softmax</span>( (q<sub>i</sub> k<sub>j</sub><sup>T</sup>) / &radic;d  -  m<sub>h</sub> &middot; (i - j) )
+
+<span class="cm"># m_h: per-head slope, geometric series: 2^(-8/H), 2^(-16/H), ...</span>
+<span class="cm"># (i - j) >= 0  (causal: only attend to past)</span></code></pre>
+    </div>
+
+    <h3>ALiBi properties and trade-offs</h3>
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border">
+            <h4>Advantages</h4>
+            <p>&bull; No positional parameters to learn or interpolate.<br>
+            &bull; Generalises smoothly past training length without any fine-tuning (biases just grow linearly).<br>
+            &bull; Heads with smaller m<sub>h</sub> attend over longer ranges &mdash; implicit multi-scale coverage.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Disadvantages</h4>
+            <p>&bull; Strictly worse than RoPE on standard benchmarks at equal context lengths.<br>
+            &bull; Cannot be retrofitted onto RoPE-pretrained models.<br>
+            &bull; The linear decay forces all heads toward a recency bias; hard to suppress for tasks needing distant recall.<br>
+            &bull; Used by BLOOM, MPT &mdash; but not by any major model post-2023.</p>
+        </div>
+    </div>
+
+    <div class="callout">
+        <div class="callout-label">ALiBi&rsquo;s legacy</div>
+        <p>ALiBi&rsquo;s key contribution was demonstrating that position can be expressed as a <em>relative bias on attention scores</em> without any positional vectors &mdash; a conceptually clean design. Its decline in favour of RoPE-with-YaRN reflects the ecosystem&rsquo;s choice of retrofittability over theoretical elegance.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-06">
+    <div class="slide-number">06</div>
+    <h2>Sliding Window + Sink Tokens (StreamingLLM)</h2>
+    <p>Sliding-window attention restricts each token to attending only to the W most recent tokens. This reduces the attention FLOPs from O(T<sup>2</sup>) to O(T &middot; W) &mdash; linear in T for a fixed window W. Mistral-7B (2023) uses W=4096 on alternating layers to cap KV cache growth.</p>
+
+    <div class="canvas-wrap">
+        <svg viewBox="0 0 660 180" width="660" height="180" xmlns="http://www.w3.org/2000/svg">
+            <style>
+                .sw-box  { fill: #161b22; stroke: #30363d; }
+                .sw-win  { fill: rgba(118,185,0,0.12); stroke: #76B900; stroke-width: 1.5; }
+                .sw-sink { fill: rgba(210,168,255,0.12); stroke: #d2a8ff; stroke-width: 1.5; }
+                .sw-lbl  { fill: #e6edf3; font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 600; }
+                .sw-sub  { fill: #8b949e; font-family: 'JetBrains Mono', monospace; font-size: 9px; }
+            </style>
+            <text x="10" y="18" class="sw-lbl">StreamingLLM: sink tokens (purple) + sliding window (green)</text>
+            <rect x="10"  y="30" width="40" height="40" rx="3" class="sw-sink"/>
+            <text x="18"  y="52" class="sw-sub">sink 0</text>
+            <rect x="55"  y="30" width="40" height="40" rx="3" class="sw-sink"/>
+            <text x="63"  y="52" class="sw-sub">sink 1</text>
+            <rect x="100" y="30" width="40" height="40" rx="3" class="sw-box"/>
+            <text x="108" y="52" class="sw-sub">tok 2</text>
+            <rect x="145" y="30" width="40" height="40" rx="3" class="sw-box"/>
+            <text x="153" y="52" class="sw-sub">tok 3</text>
+            <rect x="190" y="30" width="280" height="40" rx="3" class="sw-box"/>
+            <text x="300" y="52" class="sw-sub">&middot;&middot;&middot; many tokens (evicted from KV cache)</text>
+            <rect x="475" y="30" width="40" height="40" rx="3" class="sw-win"/>
+            <text x="481" y="52" class="sw-sub">tok T-3</text>
+            <rect x="520" y="30" width="40" height="40" rx="3" class="sw-win"/>
+            <text x="526" y="52" class="sw-sub">tok T-2</text>
+            <rect x="565" y="30" width="40" height="40" rx="3" class="sw-win"/>
+            <text x="569" y="52" class="sw-sub">tok T-1</text>
+
+            <text x="10"  y="105" class="sw-lbl">Current token (T):</text>
+            <text x="10"  y="120" class="sw-sub">Attends to: sinks (always) + sliding window (last W tokens)</text>
+            <text x="10"  y="135" class="sw-sub">KV cache size = (2 sinks) + W &mdash; constant regardless of T</text>
+            <text x="10"  y="155" class="sw-sub">Tokens in the middle are evicted. Their information is lost unless stored in sink activations.</text>
+        </svg>
+    </div>
+
+    <h3>Sink tokens &mdash; why they help</h3>
+    <p>Xiao et al. (<em>StreamingLLM</em>, 2023) observed that transformer models trained with positional encodings assign anomalously <strong>high attention weight to the first few tokens</strong> regardless of their semantic content. These &ldquo;attention sinks&rdquo; serve as <em>rest positions</em> for attention heads that have nothing relevant to attend to. Without sinks in the KV cache, evicting early tokens causes attention distributions to go unstable. With 4 sink tokens retained, streaming generation can proceed indefinitely with constant memory.</p>
+
+    <div class="callout">
+        <div class="callout-label">Limitation: no true long-range recall</div>
+        <p>Sliding-window + sinks solves the <em>memory</em> problem but not the <em>recall</em> problem: a token evicted from the sliding window is genuinely lost. For tasks requiring facts from 50K tokens ago, a different approach (ring attention, full KV cache, or Mamba hybrid) is needed.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-07">
+    <div class="slide-number">07</div>
+    <h2>Ring Attention &amp; Context Parallelism</h2>
+    <p><strong>Ring Attention</strong> (Liu et al. 2023, arXiv 2310.01889) achieves true full-context attention at 1M+ tokens by distributing the KV cache and attention computation across multiple devices in a ring topology. Each device holds a slice of the sequence and passes its KV block to the next device while simultaneously processing the current block.</p>
+
+    <div class="canvas-wrap">
+        <svg viewBox="0 0 660 240" width="660" height="240" xmlns="http://www.w3.org/2000/svg">
+            <style>
+                .rg-gpu { fill: rgba(118,185,0,0.08); stroke: #76B900; stroke-width: 1.5; }
+                .rg-lbl { fill: #e6edf3; font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 600; }
+                .rg-sub { fill: #8b949e; font-family: 'JetBrains Mono', monospace; font-size: 9px; }
+                .rg-arr { stroke: #76B900; stroke-width: 1.5; fill: none; marker-end: url(#mhrg); }
+            </style>
+            <defs>
+                <marker id="mhrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#76B900"/>
+                </marker>
+            </defs>
+            <text x="10" y="20" class="rg-lbl">Ring Attention: 4 GPUs, each holds tokens T/4</text>
+            <rect x="250" y="40"  width="160" height="60" rx="6" class="rg-gpu"/>
+            <text x="275" y="63"  class="rg-lbl">GPU 0 &mdash; tokens 0..T/4</text>
+            <text x="275" y="80"  class="rg-sub">Q0, K0, V0 resident</text>
+
+            <rect x="460" y="120" width="160" height="60" rx="6" class="rg-gpu"/>
+            <text x="480" y="143" class="rg-lbl">GPU 1 &mdash; tokens T/4..T/2</text>
+            <text x="480" y="160" class="rg-sub">Q1, K1, V1 resident</text>
+
+            <rect x="250" y="170" width="160" height="60" rx="6" class="rg-gpu"/>
+            <text x="275" y="193" class="rg-lbl">GPU 2 &mdash; tokens T/2..3T/4</text>
+            <text x="275" y="210" class="rg-sub">Q2, K2, V2 resident</text>
+
+            <rect x="30"  y="120" width="160" height="60" rx="6" class="rg-gpu"/>
+            <text x="45"  y="143" class="rg-lbl">GPU 3 &mdash; tokens 3T/4..T</text>
+            <text x="45"  y="160" class="rg-sub">Q3, K3, V3 resident</text>
+
+            <path d="M 410 70  L 470 120" class="rg-arr"/>
+            <path d="M 460 180 L 410 200" class="rg-arr"/>
+            <path d="M 250 200 L 190 180" class="rg-arr"/>
+            <path d="M 190 120 L 250 70"  class="rg-arr"/>
+            <text x="220" y="115" class="rg-sub">KV blocks rotate around ring</text>
+        </svg>
+    </div>
+
+    <h3>Context Parallelism (CP) in production</h3>
+    <p>Megatron-LM added Context Parallelism (CP) as a first-class parallelism dimension in 2024. CP splits the sequence dimension across GPUs, sending Q/K/V slices via <code>all_gather</code> and <code>reduce_scatter</code>. NVIDIA Tensor Parallel (TP) handles head parallelism; CP handles sequence parallelism. The two compose orthogonally: a model can be TP=4, CP=8, DP=16 simultaneously.</p>
+
+    <div class="callout">
+        <div class="callout-label">Practical deployment</div>
+        <p>Gemini 1.5 Pro (1M context, 2024) and Claude 3 (200K context) both require sequence parallelism at inference. The ring attention idea underlies most production implementations under the name &ldquo;context parallelism&rdquo;. NVLink bandwidth (600 GB/s bidirectional per A100 pair) makes intra-node CP essentially free; cross-node CP via InfiniBand (400 Gb/s) dominates latency above 32 GPUs.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-08">
+    <div class="slide-number">08</div>
+    <h2>Mamba-Attention Hybrids for Very Long Context</h2>
+    <p>A pragmatic synthesis: use Mamba (or another SSM) for the majority of layers where O(T) cost matters, but retain a small number of full-attention layers at regular intervals to preserve in-context recall. This hybrid strategy is used by Jamba, Zamba, and several internal models.</p>
+
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Model</th><th>Attn:Mamba ratio</th><th>Context window</th><th>KV cache cost</th></tr></thead>
+            <tbody>
+                <tr><td>Pure transformer (LLaMA-3 8B)</td><td>32:0</td><td>128K (with YaRN)</td><td>High &mdash; grows with T</td></tr>
+                <tr><td>Jamba (AI21, 52B total)</td><td>1:7</td><td>256K</td><td>Very low &mdash; 4 attn layers only</td></tr>
+                <tr><td>Zamba (Zyphra, 7B)</td><td>1:6</td><td>32K</td><td>Low &mdash; shared single attn layer</td></tr>
+                <tr><td>Mamba-pure (3B)</td><td>0:48</td><td>Theoretically &infin;</td><td>Zero (constant SSM state)</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h3>Why hybrid wins for long context</h3>
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border">
+            <h4>Attention layers handle recall</h4>
+            <p>Even a single attention layer per 7 Mamba layers has unlimited receptive field within its layer. This is sufficient to anchor the model to distant facts &mdash; think of the attention layer as a &ldquo;lookup&rdquo; escape hatch for anything not captured by Mamba&rsquo;s state.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Mamba layers handle throughput</h4>
+            <p>86% of layers have O(1) inference cost. The KV cache for 1M tokens consists only of the 4&ndash;6 attention layers&rsquo; KVs &mdash; a 7&times; reduction vs a pure transformer at the same total layer count.</p>
+        </div>
+    </div>
+</section>
+
+<section class="slide" id="slide-09">
+    <div class="slide-number">09</div>
+    <h2>What to Take Away</h2>
+    <ul>
+        <li><strong>Long context has two orthogonal problems: positional generalisation and quadratic compute.</strong> RoPE-extension techniques (PI, NTK, YaRN) solve the first; sliding window, ring attention, and SSM hybrids solve the second.</li>
+        <li><strong>RoPE is the standard because it&rsquo;s retrofittable.</strong> ALiBi is cleaner in theory but cannot be applied to an existing RoPE-pretrained model. YaRN is the current best-practice extension technique.</li>
+        <li><strong>YaRN achieves 128K+ context with ~400 fine-tuning steps.</strong> Non-uniform interpolation + temperature correction. Used by Mistral, Qwen, Codestral.</li>
+        <li><strong>Sliding window + sink tokens = constant-memory streaming.</strong> StreamingLLM: retain 4 sink tokens + W recent tokens. Loses distant recall entirely.</li>
+        <li><strong>Ring attention / context parallelism = true full-context at scale.</strong> Sequence split across devices; KV rotated via ring all-to-all. Used by Gemini 1.5 Pro, internal Claude inference.</li>
+        <li><strong>Hybrid SSM-attention is the pragmatic sweet spot.</strong> Jamba (1:7 attn:Mamba) halves KV cache cost vs a pure transformer while preserving recall via sparse full-attention layers.</li>
+    </ul>
+
+    <div class="callout">
+        <div class="callout-label">Where to next</div>
+        <p>Deck 04 leaves the autoregressive paradigm entirely and asks: what if instead of generating tokens left-to-right, we generate all tokens in parallel via a diffusion process? SEDD and LLaDA represent the current frontier of diffusion language models.</p>
+    </div>
+</section>
+
+<footer class="footer">
+    <p>Part of the <a href="https://github.com/BrendanJamesLynskey/LLM_Hub_Modern_Architectures">Modern Architectures Series</a></p>
+    <p style="margin-top: 0.5rem; font-size: 0.8rem;"><a href="https://github.com/BrendanJamesLynskey/LLM_Hub_Modern_Architectures">Back to Series Index</a></p>
+</footer>
+<script>
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            e.preventDefault();
+            const target = document.querySelector(this.getAttribute('href'));
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.style.opacity = '1';
+                entry.target.style.transform = 'translateY(0)';
+            }
+        });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.slide').forEach(slide => {
+        slide.style.opacity = '0';
+        slide.style.transform = 'translateY(30px)';
+        slide.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+        observer.observe(slide);
+    });
+</script>
+</body>
+</html>
