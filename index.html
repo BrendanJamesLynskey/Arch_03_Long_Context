@@ -6,7 +6,7 @@
     <title>Arch 03 — Long Context — RoPE, YaRN, Ring Attention</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,500;0,600;0,700;1,400;1,700&family=Karla:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,700&family=Fragment+Mono:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg-primary: #1f1622;
@@ -18,9 +18,9 @@
             --accent-dim: #98b47e44;
             --accent-glow: #98b47e33;
             --border: #3e3042;
-            --font-display: 'Space Grotesk', sans-serif;
-            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-            --font-body: 'Inter', sans-serif;
+            --font-display: 'Bodoni Moda', sans-serif;
+            --font-mono: 'Fragment Mono', 'Fragment Mono', monospace;
+            --font-body: 'Karla', sans-serif;
             --max-width: 900px;
         }
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -397,6 +397,7 @@
             table { font-size: 0.78rem; }
         }
     </style>
+<style>:root{font-synthesis-weight:none}</style>
 </head>
 <body>
 <header class="hero">
@@ -624,8 +625,8 @@ A<sub>ij</sub> = <span class="fn">softmax</span>( (q<sub>i</sub> k<sub>j</sub><s
                 .sw-box  { fill: #2e2231; stroke: #4b3c4f; }
                 .sw-win  { fill: rgba(152,180,126,0.12); stroke: #98b47e; stroke-width: 1.5; }
                 .sw-sink { fill: rgba(225,183,231,0.12); stroke: #e1b7e7; stroke-width: 1.5; }
-                .sw-lbl  { fill: #f2ebe7; font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 600; }
-                .sw-sub  { fill: #aa9ba9; font-family: 'JetBrains Mono', monospace; font-size: 9px; }
+                .sw-lbl  { fill: #f2ebe7; font-family: 'Bodoni Moda', sans-serif; font-size: 11px; font-weight: 600; }
+                .sw-sub  { fill: #aa9ba9; font-family: 'Fragment Mono', monospace; font-size: 9px; }
             </style>
             <text x="10" y="18" class="sw-lbl">StreamingLLM: sink tokens (purple) + sliding window (green)</text>
             <rect x="10"  y="30" width="40" height="40" rx="3" class="sw-sink"/>
@@ -670,8 +671,8 @@ A<sub>ij</sub> = <span class="fn">softmax</span>( (q<sub>i</sub> k<sub>j</sub><s
         <svg viewBox="0 0 660 240" width="660" height="240" xmlns="http://www.w3.org/2000/svg">
             <style>
                 .rg-gpu { fill: rgba(152,180,126,0.08); stroke: #98b47e; stroke-width: 1.5; }
-                .rg-lbl { fill: #f2ebe7; font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 600; }
-                .rg-sub { fill: #aa9ba9; font-family: 'JetBrains Mono', monospace; font-size: 9px; }
+                .rg-lbl { fill: #f2ebe7; font-family: 'Bodoni Moda', sans-serif; font-size: 12px; font-weight: 600; }
+                .rg-sub { fill: #aa9ba9; font-family: 'Fragment Mono', monospace; font-size: 9px; }
                 .rg-arr { stroke: #98b47e; stroke-width: 1.5; fill: none; marker-end: url(#mhrg); }
             </style>
             <defs>
